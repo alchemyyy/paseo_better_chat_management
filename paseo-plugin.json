@@ -1,0 +1,6 @@
+{
+  "id": "better-chat-management",
+  "name": "Better chat management",
+  "description": "Chats live under their workspace in the sidebar, forks nest under their source chat, and the tab strip keeps only the current chat's tabs",
+  "requirements": { "paseo": ">=0.13.0" }
+}
