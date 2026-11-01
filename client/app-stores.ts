@@ -69,10 +69,21 @@ export interface SessionState {
   >;
 }
 
-type StoreName = "layout" | "attachments" | "session";
+/** packages/app/src/stores/sidebar-view-store.ts */
+export interface SidebarViewState {
+  workspaceSort: string;
+  setWorkspaceSort(sort: "manual" | "created" | "lastPrompt"): void;
+}
+
+type StoreName = "layout" | "attachments" | "session" | "sidebarView";
 
 const MIN_SCAN_INTERVAL_MS = 1500;
-const found: { layout?: StoreApi<LayoutState>; attachments?: StoreApi<AttachmentsState>; session?: StoreApi<SessionState> } = {};
+const found: {
+  layout?: StoreApi<LayoutState>;
+  attachments?: StoreApi<AttachmentsState>;
+  session?: StoreApi<SessionState>;
+  sidebarView?: StoreApi<SidebarViewState>;
+} = {};
 let lastScanAt = 0;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -93,6 +104,9 @@ function classify(state: unknown): StoreName | null {
   if (record(fields.attachmentsByScope) && typeof fields.setWorkspaceAttachments === "function") {
     return "attachments";
   }
+  if (typeof fields.workspaceSort === "string" && typeof fields.setWorkspaceSort === "function") {
+    return "sidebarView";
+  }
   const sessions = record(fields.sessions);
   if (sessions) {
     for (const session of Object.values(sessions)) {
@@ -105,7 +119,7 @@ function classify(state: unknown): StoreName | null {
 
 /** Scans the fiber tree for every store not found yet; throttled because a scan walks all fibers */
 function scan(force: boolean): void {
-  if (found.layout && found.attachments && found.session) return;
+  if (found.layout && found.attachments && found.session && found.sidebarView) return;
   const now = Date.now();
   if (!force && now - lastScanAt < MIN_SCAN_INTERVAL_MS) return;
   lastScanAt = now;
@@ -114,7 +128,7 @@ function scan(force: boolean): void {
   scanStores(container, (store) => {
     const name = classify(store.getState());
     if (name && !found[name]) (found as Record<StoreName, unknown>)[name] = store;
-    return Boolean(found.layout && found.attachments && found.session);
+    return Boolean(found.layout && found.attachments && found.session && found.sidebarView);
   });
 }
 
@@ -132,4 +146,10 @@ export function attachmentsStore(force = false): StoreApi<AttachmentsState> | nu
 export function sessionStore(force = false): StoreApi<SessionState> | null {
   if (!found.session) scan(force);
   return found.session ?? null;
+}
+
+/** Mounted while the sidebar lists workspaces; `force` skips the scan throttle */
+export function sidebarViewStore(force = false): StoreApi<SidebarViewState> | null {
+  if (!found.sidebarView) scan(force);
+  return found.sidebarView ?? null;
 }

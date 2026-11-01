@@ -3,6 +3,7 @@ import { findAncestorProps, type StoreApi } from "./fiber";
 import { draftAttachmentScopeKey, readForkSource } from "./fork-attachment";
 import { installTabMenuSplits } from "./tab-menu";
 import { wrapStoreAction } from "./layout-wrap";
+import { installWorkspaceDrag } from "./workspace-drag";
 import {
   collectPanes,
   type LayoutTab,
@@ -489,6 +490,11 @@ function createEngine(box: SharedBox): Engine {
 
   const releaseStyle = installStyle();
   const releaseHover = suppressRowHover();
+  // A drop moves list items; the chat containers follow them before the next paint
+  const releaseDrag = installWorkspaceDrag(() => {
+    clearTimeout(timer ?? undefined);
+    sync();
+  });
   const releaseTabMenu = installTabMenuSplits({
     layoutStore: attachStore,
     selectedWorkspaces: () => lastSelected,
@@ -519,6 +525,7 @@ function createEngine(box: SharedBox): Engine {
       restoreReplaceTab?.();
       releaseStyle();
       releaseHover();
+      releaseDrag();
       releaseTabMenu();
       clearTabVisibility();
       removeAllSlots();

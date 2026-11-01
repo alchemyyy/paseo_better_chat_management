@@ -12,6 +12,8 @@ interface DomStyle {
   borderTopLeftRadius: string;
   paddingTop: string;
   setProperty(name: string, value: string): void;
+  getPropertyValue(name: string): string;
+  removeProperty(name: string): string;
 }
 export interface DomMouseEvent {
   preventDefault(): void;
@@ -101,6 +103,8 @@ export const IS_WEB = Platform.OS === "web";
 const ROW_TEST_ID_PREFIX = "sidebar-workspace-row-";
 const ROW_SELECTOR = `[data-testid^="${ROW_TEST_ID_PREFIX}"]`;
 const ROW_LIST_SELECTOR = '[data-testid^="sidebar-workspace-list-"], [data-testid="sidebar-pinned-list"]';
+/** Pinned workspaces (sidebar-workspace-list.tsx); their rows belong to no project */
+const PINNED_SECTION_SELECTOR = '[data-testid="sidebar-pinned-section"]';
 /** Tab chips carry `workspace-tab-<identity>` (workspace-desktop-tabs-row.tsx) */
 const TAB_SCROLL_SELECTOR = '[data-testid="workspace-tabs-scroll"]';
 const TAB_TEST_ID_PREFIX = "workspace-tab-";
@@ -162,11 +166,19 @@ const PROJECT_ROW_PADDING_PX = 4;
 const PROJECT_ROW_GAP_PX = 2;
 /** Paseo pads project rows 8px left (sidebar-workspace-list.tsx projectRow); the plugin takes 6 off */
 const PROJECT_ROW_PADDING_LEFT_PX = 2;
-/** A project's workspace list is `sidebar-workspace-list-<viewKey>`, its row `sidebar-project-row-<viewKey>` */
-const WORKSPACE_LIST_PREFIX = "sidebar-workspace-list-";
+/**
+ * A project's row is `sidebar-project-row-<viewKey>`. Its workspace list carries
+ * `sidebar-workspace-list-<viewKey>` only while sorting is automatic: the manual sort's
+ * DraggableList drops the test id, so the plugin finds lists by their rows and marks them.
+ */
+const WORKSPACE_LIST_ATTRIBUTE = "data-better-chat-workspace-list";
 const PROJECT_ROW_PREFIX = "sidebar-project-row-";
 /** Set on a project's workspace list while it draws the rail joining it to the project icon */
 const RAIL_ATTRIBUTE = "data-better-chat-rail";
+/** Set on a workspace list while one of its rows is dragged; the rail hides until the drop */
+const LIST_DRAGGING_ATTRIBUTE = "data-better-chat-dragging";
+/** Set on the document element for a whole workspace drag gesture, project hand-off included */
+const DRAG_GESTURE_ATTRIBUTE = "data-better-chat-workspace-drag";
 /**
  * Marks a project's block (header plus workspace list). Paseo pads an expanded block 12px below
  * (sidebar-workspace-list.tsx projectBlockExpanded); the plugin closes that to PROJECT_GAP_PX.
@@ -252,10 +264,13 @@ const STYLE_TEXT = [
   // around each workspace's status dot and turning at the last row: one SVG path, so every part
   // shares the stroke, antialiasing, and joins
   `[${RAIL_ATTRIBUTE}]{position:relative}`,
-  `[${PROJECT_BLOCK_ATTRIBUTE}]:has([data-testid^="${WORKSPACE_LIST_PREFIX}"]){padding-bottom:${PROJECT_GAP_PX}px !important}`,
+  `[${PROJECT_BLOCK_ATTRIBUTE}]:has([${WORKSPACE_LIST_ATTRIBUTE}]){padding-bottom:${PROJECT_GAP_PX}px !important}`,
   // Above the rows, so a selected workspace's solid backdrop cannot cover the ring arcs reaching into it
   `[${RAIL_ATTRIBUTE}]::before{content:"";position:absolute;z-index:1;pointer-events:none;left:0;top:var(${RAIL_BOX_TOP_VARIABLE});width:var(${RAIL_BOX_WIDTH_VARIABLE});height:var(${RAIL_BOX_HEIGHT_VARIABLE});background-color:var(${RAIL_COLOR_VARIABLE});-webkit-mask:var(${RAIL_IMAGE_VARIABLE}) no-repeat 0 0 / 100% 100%;mask:var(${RAIL_IMAGE_VARIABLE}) no-repeat 0 0 / 100% 100%}`,
   `[${PROJECT_BLOCK_ATTRIBUTE}]:has(${PROJECT_ROW_SELECTOR}:hover) [${RAIL_ATTRIBUTE}]::before{background-color:var(${RAIL_HOVER_COLOR_VARIABLE})}`,
+  // The rail's rings sit on resting rows, so it steps aside while the rows move
+  `[${RAIL_ATTRIBUTE}][${LIST_DRAGGING_ATTRIBUTE}]::before{visibility:hidden}`,
+  `[${DRAG_GESTURE_ATTRIBUTE}],[${DRAG_GESTURE_ATTRIBUTE}] *{user-select:none !important;-webkit-user-select:none !important}`,
   `${ROW_SELECTOR}{padding-left:${WORKSPACE_ROW_PADDING_LEFT_PX}px !important}`,
   `${WORKSPACE_STATUS_SELECTOR}{transform:translateX(${STATUS_NUDGE_PX + WORKSPACE_ROW_PULL_PX}px)}`,
   `[${RAIL_ATTRIBUTE}] ${WORKSPACE_STATUS_SELECTOR}{transform:translateX(var(${STATUS_SHIFT_VARIABLE}))}`,
@@ -331,17 +346,68 @@ export function findWorkspaceRow(workspaceKey: string): DomElement | null {
 
 /**
  * The outermost ancestor that holds only this row: the list item. Chats go after it, outside
- * the row's hover card and drag handle.
+ * the row's hover card and drag handle. A list holding a single row has no marker of its own
+ * under manual sorting, so the climb also stops below the project's block and the pinned section.
  */
-function rowItem(row: DomElement): DomElement {
+export function workspaceRowItem(row: DomElement): DomElement {
   let item = row;
   for (let depth = 0; depth < MAX_ROW_CLIMB; depth++) {
     const parent = item.parentElement;
-    if (!parent || parent.matches(ROW_LIST_SELECTOR)) break;
+    if (!parent || parent.matches(ROW_LIST_SELECTOR) || parent.matches(PINNED_SECTION_SELECTOR)) break;
     if (parent.querySelectorAll(ROW_SELECTOR).length > 1) break;
+    if (parent.querySelector(PROJECT_ROW_SELECTOR)) break;
     item = parent;
   }
   return item;
+}
+
+/** The workspace key in a row's test id */
+export function rowWorkspaceKey(row: DomElement): string {
+  return (row.getAttribute("data-testid") ?? "").slice(ROW_TEST_ID_PREFIX.length);
+}
+
+/** The workspace row `target` is in, or null */
+export function closestWorkspaceRow(target: DomElement | null): DomElement | null {
+  if (!target || typeof target.closest !== "function") return null;
+  return target.closest(ROW_SELECTOR);
+}
+
+export function isPinnedRow(row: DomElement): boolean {
+  return row.closest(PINNED_SECTION_SELECTOR) !== null;
+}
+
+/** The rows of a workspace list, in order */
+export function listRows(list: DomElement): DomElement[] {
+  const rows: DomElement[] = [];
+  const elements = list.querySelectorAll(ROW_SELECTOR);
+  for (let index = 0; index < elements.length; index++) rows.push(elements[index]);
+  return rows;
+}
+
+/** The chat container that follows a row's list item, or null */
+export function slotAfter(item: DomElement): DomElement | null {
+  const next = item.nextSibling;
+  return next !== null && typeof next.getAttribute === "function" && next.getAttribute(SLOT_ATTRIBUTE) !== null
+    ? next
+    : null;
+}
+
+/** A project's header row, by view key */
+export function findProjectRow(viewKey: string): DomElement | null {
+  const rows = document.querySelectorAll(PROJECT_ROW_SELECTOR);
+  for (let index = 0; index < rows.length; index++) {
+    if (rows[index].getAttribute("data-testid") === `${PROJECT_ROW_PREFIX}${viewKey}`) return rows[index];
+  }
+  return null;
+}
+
+/** Marks a workspace list while one of its rows is dragged, and the document for the whole gesture */
+export function setListDragging(list: DomElement, on: boolean): void {
+  setFlag(list, LIST_DRAGGING_ATTRIBUTE, on);
+}
+
+export function setDragGesture(on: boolean): void {
+  setFlag(document.documentElement, DRAG_GESTURE_ATTRIBUTE, on);
 }
 
 let nextSlotId = 1;
@@ -368,7 +434,7 @@ function childWith(parent: DomElement, attribute: string): DomElement | null {
  * press, drag, or focus handling.
  */
 export function placeSlot(row: DomElement, workspaceKey: string): PlacedSlot | null {
-  const item = rowItem(row);
+  const item = workspaceRowItem(row);
   const parent = item.parentElement;
   if (!parent) return null;
   if (item.getAttribute(ITEM_ATTRIBUTE) === null) item.setAttribute(ITEM_ATTRIBUTE, "true");
@@ -382,8 +448,17 @@ export function placeSlot(row: DomElement, workspaceKey: string): PlacedSlot | n
     typeof next.getAttribute === "function" &&
     next.getAttribute(SLOT_ATTRIBUTE) !== null &&
     next.getAttribute(SLOT_KEY_ATTRIBUTE) === workspaceKey;
-  let wrapper = next;
-  if (!wrapper || !isOwnSlot) {
+  let wrapper = isOwnSlot ? next : null;
+  // A reorder moves the list items but not the plugin's containers; one left behind moves back
+  // after its item, so its chats stay mounted
+  const siblings = wrapper ? null : parent.querySelectorAll(`:scope > [${SLOT_ATTRIBUTE}]`);
+  for (let index = 0; siblings && index < siblings.length; index++) {
+    if (siblings[index].getAttribute(SLOT_KEY_ATTRIBUTE) !== workspaceKey) continue;
+    wrapper = siblings[index];
+    parent.insertBefore(wrapper, next);
+    break;
+  }
+  if (!wrapper) {
     wrapper = document.createElement("div");
     wrapper.setAttribute(SLOT_ATTRIBUTE, String(nextSlotId++));
     wrapper.setAttribute(SLOT_KEY_ATTRIBUTE, workspaceKey);
@@ -476,31 +551,57 @@ export function removeStaleSlots(live: ReadonlySet<DomElement>): void {
   }
 }
 
+export interface ProjectList {
+  viewKey: string;
+  /** The parent of the project's workspace list items */
+  list: DomElement;
+  projectRow: DomElement;
+}
+
+/**
+ * Each expanded project's workspace list with its project row, under either sort: the list is
+ * the parent of the project's row items, and its project the one project row in the nearest
+ * ancestor that holds any. Marks each list for the block spacing rule.
+ */
+export function findProjectLists(): ProjectList[] {
+  const found: ProjectList[] = [];
+  const seen = new Set<DomElement>();
+  const rows = document.querySelectorAll(ROW_SELECTOR);
+  for (let index = 0; index < rows.length; index++) {
+    if (isPinnedRow(rows[index])) continue;
+    const list = workspaceRowItem(rows[index]).parentElement;
+    if (!list || seen.has(list)) continue;
+    seen.add(list);
+    let projectRow: DomElement | null = null;
+    for (let block: DomElement | null = list; block; block = block.parentElement) {
+      const projectRows = block.querySelectorAll(PROJECT_ROW_SELECTOR);
+      if (projectRows.length === 0) continue;
+      if (projectRows.length === 1) projectRow = projectRows[0];
+      break;
+    }
+    if (!projectRow) continue;
+    if (list.getAttribute(WORKSPACE_LIST_ATTRIBUTE) === null) list.setAttribute(WORKSPACE_LIST_ATTRIBUTE, "true");
+    const viewKey = (projectRow.getAttribute("data-testid") ?? "").slice(PROJECT_ROW_PREFIX.length);
+    found.push({ viewKey, list, projectRow });
+  }
+  return found;
+}
+
 /**
  * Joins each expanded project's workspace list to its project icon with a rail: the list's
  * ::before, placed by variables measured here from the icon's slot (project-leading-visual.tsx)
  * and colored from the project title. Lists without a matching project row lose the rail.
  */
 export function syncProjectRails(): void {
-  const projectRows = new Map<string, DomElement>();
-  const rows = document.querySelectorAll(PROJECT_ROW_SELECTOR);
-  for (let index = 0; index < rows.length; index++) {
-    const testId = rows[index].getAttribute("data-testid");
-    if (testId) projectRows.set(testId.slice(PROJECT_ROW_PREFIX.length), rows[index]);
-  }
-  const lists = document.querySelectorAll(`[data-testid^="${WORKSPACE_LIST_PREFIX}"]`);
-  for (let index = 0; index < lists.length; index++) {
-    const list = lists[index];
-    const viewKey = (list.getAttribute("data-testid") ?? "").slice(WORKSPACE_LIST_PREFIX.length);
-    const projectRow = projectRows.get(viewKey);
+  for (const { list, projectRow } of findProjectLists()) {
     // The block is the nearest ancestor holding both the project's header and its list
     let block = list.parentElement;
-    while (block && projectRow && !block.contains(projectRow)) block = block.parentElement;
+    while (block && !block.contains(projectRow)) block = block.parentElement;
     if (block && block.getAttribute(PROJECT_BLOCK_ATTRIBUTE) === null) block.setAttribute(PROJECT_BLOCK_ATTRIBUTE, "true");
     // The row's first child is its left group, whose first child is the icon slot
-    const slot = projectRow?.firstElementChild?.firstElementChild;
+    const slot = projectRow.firstElementChild?.firstElementChild;
     // The title, after the icon slot: the icon's own letter is text too, and hover swaps it for a chevron
-    const title = projectRow?.firstElementChild?.lastElementChild?.querySelector('[dir="auto"]');
+    const title = projectRow.firstElementChild?.lastElementChild?.querySelector('[dir="auto"]');
     const slotRect = slot?.getBoundingClientRect();
     if (!slotRect || slotRect.width === 0 || !title) {
       if (list.getAttribute(RAIL_ATTRIBUTE) !== null) list.removeAttribute(RAIL_ATTRIBUTE);
@@ -597,7 +698,15 @@ function drawRail(
 
 export function removeAllSlots(): void {
   removeStaleSlots(new Set());
-  for (const attribute of [HAS_NEW_CHAT_ATTRIBUTE, ITEM_ATTRIBUTE, RAIL_ATTRIBUTE, PROJECT_BLOCK_ATTRIBUTE]) {
+  for (const attribute of [
+    HAS_NEW_CHAT_ATTRIBUTE,
+    ITEM_ATTRIBUTE,
+    RAIL_ATTRIBUTE,
+    PROJECT_BLOCK_ATTRIBUTE,
+    WORKSPACE_LIST_ATTRIBUTE,
+    LIST_DRAGGING_ATTRIBUTE,
+    DRAG_GESTURE_ATTRIBUTE,
+  ]) {
     const hosts = document.querySelectorAll(`[${attribute}]`);
     for (let index = 0; index < hosts.length; index++) hosts[index].removeAttribute(attribute);
   }

@@ -24,6 +24,7 @@ The script installs the plugin with `paseo plugin install <this folder>`, or run
 - Under the selected workspace row, an info line shows the host name and the workspace folder.
 - Workspace rows get a **+** (new chat) button and an always-visible **Workspace actions** menu button. Left-click **+** opens a draft with the composer's remembered settings. Right-click lists the host's backends and starts the draft with the one you pick. The menu button opens the row's own context menu.
 - Workspace rows no longer show hover highlights, the hover-only menu, or the hover card. Project rows are more compact.
+- Drag a workspace row to reorder it within its project, the way projects reorder; its chats move with it. The first drop switches the sidebar's Sort to Manual, since Paseo shows a saved workspace order only under that sort. Drag past the project's first or last workspace and the gesture becomes a drag of the whole project, as if it had started on the project row. Escape cancels a workspace drag. Pinned workspaces keep Paseo's own drag.
 
 ### Tab strip
 - Chat tabs are hidden, except the current chat's, which stays visible at the left.
