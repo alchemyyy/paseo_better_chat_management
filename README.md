@@ -4,13 +4,17 @@ Paseo plugin that lists chats under their workspace in the sidebar, nests forks 
 
 ## Install
 
-Requires Paseo 0.13.0 or later with plugins enabled (Settings > Plugins > Enable plugins).
+Requires [Paseo](https://paseo.sh) 0.13.0 or later with plugins turned on (Settings > Plugins > Enable plugins).
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1
+```sh
+paseo plugin install https://github.com/alchemyyy/paseo_better_chat_management
 ```
 
-The script installs the plugin with `paseo plugin install <this folder>`, or runs `paseo plugin reload better-chat-management` if it is already installed. It warns when `pluginsEnabled` is off in `~/.paseo/config.json`. `-PaseoCli <path>` points to `paseo.cmd` if it is not on `PATH` or in the default Paseo install folders.
+`paseo plugin update better-chat-management` updates it, and `paseo plugin remove better-chat-management` removes it. The [Plugin manager](https://github.com/alchemyyy/paseo_plugin_manager) plugin checks and updates installed plugins from the sidebar.
+
+The `paseo` command comes with the desktop app: Settings > Integrations > Command line puts it on `PATH`, or run `paseo.cmd` from the app's `resources\bin` folder.
+
+To work on the plugin, clone this repository and install the folder instead (`paseo plugin install <folder>`), then run `paseo plugin reload better-chat-management` after editing it.
 
 ## Features
 
@@ -32,7 +36,7 @@ The script installs the plugin with `paseo plugin install <this folder>`, or run
 - Tabs opened while a chat is current belong to that chat and hide when you switch to another chat. Tabs that were already open when the plugin loaded, and focused tabs, stay visible.
 - New file tabs open in the side pane next to the chat. A file that is already open is shown where it is. When Paseo's file preview would replace an unmodified file tab, the new file opens as a separate tab beside it.
 - The file tab context menu adds **Split left/right/up/down**.
-- The plugin replaces Paseo's close-left/right/others. Its version skips the confirmation dialog and closes only file-like, diff, plugin, and setup tabs. It never closes chats, terminals, browsers, tabs with unsaved changes, or tabs pinned with the [editor-enhancements](../paseo_editor_enhancements) plugin.
+- The plugin replaces Paseo's close-left/right/others. Its version skips the confirmation dialog and closes only file-like, diff, plugin, and setup tabs. It never closes chats, terminals, browsers, tabs with unsaved changes, or tabs pinned with the [editor-enhancements](https://github.com/alchemyyy/paseo_editor_enhancements) plugin.
 
 Pinned tabs, the per-pane LRU limit, gutter line references, and companion editor windows moved to editor-enhancements.
 
