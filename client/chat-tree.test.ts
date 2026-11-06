@@ -31,3 +31,11 @@ test("missing parents and cycles still show every chat", () => {
   const parents = { x: "y", y: "x", orphan: "archived" };
   assert.deepEqual(shape(buildChatRows(agents, parents)), ["orphan", "x", "-y"]);
 });
+
+test("dragged order sorts siblings; chats not in it follow oldest first", () => {
+  const agents = [chat("a", "1"), chat("b", "2"), chat("c", "3"), chat("new", "4"), chat("a1", "5"), chat("a2", "6")];
+  const parents = { a1: "a", a2: "a" };
+  // A child's place among its siblings holds wherever the list puts it relative to other rows
+  const order = ["c", "a2", "a", "a1", "b"];
+  assert.deepEqual(shape(buildChatRows(agents, parents, order)), ["c", "a", "-a2", "-a1", "b", "new"]);
+});

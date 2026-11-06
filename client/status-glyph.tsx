@@ -20,9 +20,10 @@ const RING_HEAD_OPACITY = 0.9;
 const ALERT_SIZE = 12;
 const IDLE_OPACITY = 0.3;
 
-export function chatStatus(agent: PaseoAgent): ChatStatus {
+/** `subagentsRunning`: the chat's own turn may be over while subagents it started still work */
+export function chatStatus(agent: PaseoAgent, subagentsRunning = false): ChatStatus {
   if (agent.pendingPermissions.length > 0 || agent.attentionReason === "permission") return "needs_input";
-  if (agent.status === "running" || agent.status === "initializing") return "running";
+  if (agent.status === "running" || agent.status === "initializing" || subagentsRunning) return "running";
   if (agent.status === "error" || agent.attentionReason === "error") return "failed";
   if (agent.requiresAttention) return "attention";
   return "idle";

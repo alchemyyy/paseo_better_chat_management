@@ -11,6 +11,7 @@ interface DomStyle {
   borderBottomRightRadius: string;
   borderTopLeftRadius: string;
   paddingTop: string;
+  zIndex: string;
   setProperty(name: string, value: string): void;
   getPropertyValue(name: string): string;
   removeProperty(name: string): string;
@@ -21,6 +22,7 @@ export interface DomMouseEvent {
 export interface DomElement {
   readonly parentElement: DomElement | null;
   readonly nextSibling: DomElement | null;
+  readonly previousElementSibling: DomElement | null;
   readonly firstElementChild: DomElement | null;
   readonly lastElementChild: DomElement | null;
   readonly isConnected: boolean;
@@ -130,6 +132,12 @@ const ITEM_ATTRIBUTE = "data-better-chat-item";
 const PROBE_ATTRIBUTE = "data-better-chat-probe";
 /** Chat rows carry their agent id (React Native Web renders `dataSet` as data-* attributes) */
 const CHAT_AGENT_ATTRIBUTE = "data-better-chat-agent";
+/** On the chat row's title area, where a drag can start; and the row's place in its list's tree */
+const CHAT_HANDLE_ATTRIBUTE = "data-better-chat-handle";
+const CHAT_DEPTH_ATTRIBUTE = "data-better-chat-depth";
+const CHAT_PARENT_ATTRIBUTE = "data-better-chat-parent";
+/** Drop feedback while a chat is dragged: "zone" over the target workspace, "line" where it lands */
+const DRAG_MARKER_ATTRIBUTE = "data-better-chat-drag-marker";
 const CURRENT_CHAT_ATTRIBUTE = "data-better-chat-current";
 const SELECTED_COLOR_VARIABLE = "--better-chat-selected-color";
 const SELECTED_RADIUS_VARIABLE = "--better-chat-selected-radius";
@@ -142,6 +150,10 @@ const IDLE_BACKDROP_TINT = `color-mix(in srgb, var(${SELECTED_COLOR_VARIABLE}) 6
 const IDLE_BACKDROP_FILL = `color-mix(in srgb, ${IDLE_BACKDROP_TINT} 4%, transparent)`;
 /** 10% lighter than the fill's tint */
 const IDLE_BACKDROP_EDGE = `color-mix(in srgb, color-mix(in srgb, ${IDLE_BACKDROP_TINT} 90%, #fff) 14%, transparent)`;
+/** Drop feedback's tint: the backdrop tint, with a neutral grey before any workspace is selected */
+const DRAG_MARKER_TINT = `color-mix(in srgb, var(${SELECTED_COLOR_VARIABLE}, #6b7280) 60%, #fff)`;
+/** Above the other projects' blocks (dnd-kit gives each drag item z-index 1) while a chat is dragged out of its own */
+const LIFTED_Z_INDEX = "1000";
 /** A hair under 1px; the browser antialiases it rather than snapping to whole pixels on HiDPI */
 const IDLE_BACKDROP_EDGE_PX = 0.8;
 /** The current chat's backdrop starts here, under the workspace row's status glyph */
@@ -297,6 +309,9 @@ const STYLE_TEXT = [
   `[${NEW_CHAT_ATTRIBUTE}] > *{pointer-events:auto}`,
   `${BRANCH_TEXT_SELECTOR}{color:${BRANCH_TEXT_COLOR} !important}`,
   `${META_ROW_SELECTOR}{transform:translateY(${META_ROW_SHIFT_PX}px)}`,
+  `[${DRAG_MARKER_ATTRIBUTE}]{position:fixed;pointer-events:none;z-index:2147483000;box-sizing:border-box}`,
+  `[${DRAG_MARKER_ATTRIBUTE}="zone"]{border-radius:var(${SELECTED_RADIUS_VARIABLE},6px);background-color:color-mix(in srgb,${DRAG_MARKER_TINT} 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,${DRAG_MARKER_TINT} 45%,transparent)}`,
+  `[${DRAG_MARKER_ATTRIBUTE}="line"]{border-radius:1px;background-color:color-mix(in srgb,${DRAG_MARKER_TINT} 80%,transparent)}`,
 ].join("");
 const REACT_PORTAL_TYPE = Symbol.for("react.portal");
 const MAX_ROW_CLIMB = 12;
@@ -392,6 +407,127 @@ export function slotAfter(item: DomElement): DomElement | null {
   return next !== null && typeof next.getAttribute === "function" && next.getAttribute(SLOT_ATTRIBUTE) !== null
     ? next
     : null;
+}
+
+/** A workspace's sidebar area that takes a dropped chat: its row and the chat container after it */
+export interface ChatDropZone {
+  workspaceKey: string;
+  /** The workspace's chat rows render here */
+  list: DomElement;
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export function chatDropZones(): ChatDropZone[] {
+  const zones: ChatDropZone[] = [];
+  const slots = document.querySelectorAll(`[${SLOT_ATTRIBUTE}]`);
+  for (let index = 0; index < slots.length; index++) {
+    const slot = slots[index];
+    const list = childWith(slot, LIST_ATTRIBUTE);
+    const item = slot.previousElementSibling;
+    if (!list || !item || item.getAttribute(ITEM_ATTRIBUTE) === null) continue;
+    const itemRect = item.getBoundingClientRect();
+    const slotRect = slot.getBoundingClientRect();
+    if (itemRect.height === 0 && slotRect.height === 0) continue;
+    zones.push({
+      workspaceKey: slot.getAttribute(SLOT_KEY_ATTRIBUTE) ?? "",
+      list,
+      top: Math.min(itemRect.top, slotRect.top),
+      bottom: Math.max(itemRect.top + itemRect.height, slotRect.top + slotRect.height),
+      left: Math.min(itemRect.left, slotRect.left),
+      right: Math.max(itemRect.left + itemRect.width, slotRect.left + slotRect.width),
+    });
+  }
+  return zones;
+}
+
+/** The chat row a press on its drag handle (the row's title area) started in, or null */
+export function closestChatHandleRow(target: DomElement | null): DomElement | null {
+  if (!target || typeof target.closest !== "function") return null;
+  if (target.closest("input, textarea")) return null;
+  return target.closest(`[${CHAT_HANDLE_ATTRIBUTE}]`)?.closest(`[${CHAT_AGENT_ATTRIBUTE}]`) ?? null;
+}
+
+/** The chat list holding a chat row and its workspace key, or null */
+export function chatRowList(row: DomElement): { list: DomElement; workspaceKey: string } | null {
+  const list = row.parentElement;
+  if (!list || list.getAttribute(LIST_ATTRIBUTE) === null) return null;
+  const workspaceKey = list.parentElement?.getAttribute(SLOT_KEY_ATTRIBUTE);
+  return workspaceKey ? { list, workspaceKey } : null;
+}
+
+/** A chat row's place in its list's tree, from the attributes sidebar-chats.tsx renders */
+export interface ChatRowInfo {
+  element: DomElement;
+  agentId: string;
+  depth: number;
+  /** The row it nests under in this list, or "" for a top-level row */
+  parentId: string;
+}
+
+export function chatRowsIn(list: DomElement): ChatRowInfo[] {
+  const rows: ChatRowInfo[] = [];
+  const elements = list.querySelectorAll(`:scope > [${CHAT_AGENT_ATTRIBUTE}]`);
+  for (let index = 0; index < elements.length; index++) {
+    const element = elements[index];
+    rows.push({
+      element,
+      agentId: element.getAttribute(CHAT_AGENT_ATTRIBUTE) ?? "",
+      depth: Number(element.getAttribute(CHAT_DEPTH_ATTRIBUTE) ?? 0),
+      parentId: element.getAttribute(CHAT_PARENT_ATTRIBUTE) ?? "",
+    });
+  }
+  return rows;
+}
+
+/**
+ * Raises every stacking context `element` sits in above its siblings, so a row dragged out of
+ * its project's block draws over the blocks after it (each project's drag item has its own
+ * z-index). Returns the function that puts the z-indexes back.
+ */
+export function liftStackingContexts(element: DomElement): () => void {
+  const lifted: [DomElement, string][] = [];
+  for (let ancestor = element.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+    if (window.getComputedStyle(ancestor).zIndex === "auto") continue;
+    lifted.push([ancestor, ancestor.style.getPropertyValue("z-index")]);
+    ancestor.style.setProperty("z-index", LIFTED_Z_INDEX);
+  }
+  return () => {
+    for (const [ancestor, zIndex] of lifted) {
+      if (zIndex) ancestor.style.setProperty("z-index", zIndex);
+      else ancestor.style.removeProperty("z-index");
+    }
+  };
+}
+
+/** A fixed box over the page, for drag feedback outside React's trees */
+export interface DragMarker {
+  /** Shows the box there, or hides it for null */
+  place(box: { top: number; left: number; width: number; height: number } | null): void;
+  remove(): void;
+}
+
+export function createDragMarker(look: string): DragMarker {
+  const marker = document.createElement("div");
+  marker.setAttribute(DRAG_MARKER_ATTRIBUTE, look);
+  marker.style.setProperty("display", "none");
+  document.body.appendChild(marker);
+  return {
+    place(box) {
+      if (!box) {
+        marker.style.setProperty("display", "none");
+        return;
+      }
+      marker.style.setProperty("display", "block");
+      marker.style.setProperty("top", `${box.top}px`);
+      marker.style.setProperty("left", `${box.left}px`);
+      marker.style.setProperty("width", `${box.width}px`);
+      marker.style.setProperty("height", `${box.height}px`);
+    },
+    remove: () => marker.remove(),
+  };
 }
 
 /** A project's header row, by view key */

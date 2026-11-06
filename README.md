@@ -19,8 +19,8 @@ To work on the plugin, clone this repository and install the folder instead (`pa
 ## Features
 
 ### Sidebar chats
-- Each workspace row lists its chats underneath. Forks nest under the chat they were forked from, chats launched by another agent nest under their launcher, and siblings sort oldest first.
-- Each chat row shows a status glyph matching the workspace row's (including the running ring), the title ("New chat" if untitled), and a compact last-activity time (`now`, `5m`, `2h`, `3d`, then a date).
+- Each workspace row lists its chats underneath. Forks nest under the chat they were forked from, chats launched by another agent nest under their launcher, and siblings sort oldest first unless dragged into another order.
+- Each chat row shows a status glyph matching the workspace row's (including the running ring, which also shows while subagents the chat started are still working after its own turn ends), the title ("New chat" if untitled), and a compact last-activity time (`now`, `5m`, `2h`, `3d`, then a date).
 - Click a chat to open it. Double-click to rename it inline: Enter or leaving the box saves, Escape cancels.
 - Each row has **Fork chat** and **Archive chat** buttons. Forking opens a draft in the same workspace that carries the chat history and the source chat's provider, model, mode, and features.
 - The open chat's row is highlighted like the selected workspace row.
@@ -28,7 +28,10 @@ To work on the plugin, clone this repository and install the folder instead (`pa
 - Under the selected workspace row, an info line shows the host name and the workspace folder.
 - Workspace rows get a **+** (new chat) button and an always-visible **Workspace actions** menu button. Left-click **+** opens a draft with the composer's remembered settings. Right-click lists the host's backends and starts the draft with the one you pick. The menu button opens the row's own context menu.
 - Workspace rows no longer show hover highlights, the hover-only menu, or the hover card. Project rows are more compact.
-- Drag a workspace row to reorder it within its project, the way projects reorder; its chats move with it. The first drop switches the sidebar's Sort to Manual, since Paseo shows a saved workspace order only under that sort. Drag past the project's first or last workspace and the gesture becomes a drag of the whole project, as if it had started on the project row. Escape cancels a workspace drag. Pinned workspaces keep Paseo's own drag.
+- Drag a workspace row to reorder it within its project, the way projects reorder; its chats move with it. The first drop switches the sidebar's Sort to Manual, since Paseo shows a saved workspace order only under that sort. Drag past the project's first or last workspace and the gesture becomes a drag of the whole project, as if it had started on the project row. Escape cancels a workspace drag. Pinned workspaces keep Paseo's own drag. Workspaces cannot move to another project.
+- Drag a chat by its title to reorder it among the chats beside it in its workspace; the chats nested under it come along. Drop it on another workspace of the same host (the drop target highlights, a line shows where it lands) to list it there, with its forks and launched agents. It opens in that workspace's tabs, but it still runs in its own workspace's folder, and Paseo's workspace status and unread counts still count it there. Dropping it back on its own workspace undoes the move, and Escape cancels a drag.
+- A feather left of a chat's status glyph marks a chat listed outside its own workspace; its accessibility label names the workspace it came from. When the workspace it was moved to is archived, the chat returns to its own workspace for good. Archiving the chat's own workspace archives it too, wherever it is listed.
+- A pencil left of the status glyph marks a chat with a message typed and left unsent, once another chat is open.
 
 ### Tab strip
 - Chat tabs are hidden, except the current chat's, which stays visible at the left.
@@ -42,6 +45,7 @@ Pinned tabs, the per-pane LRU limit, gutter line references, and companion edito
 
 ### Data
 - Fork lineage (fork id to source chat id) is stored in a host-scoped plugin settings document, `fork-lineage`, because Paseo does not record it.
+- Where dragged chats are listed and their order are stored in the host-scoped `chat-placement` document, since Paseo cannot move a chat to another workspace.
 - Tab ownership is kept in the app's `localStorage` under the plugin's former id, `better-chat-display`. Without storage it lasts only for the session.
 
 ## Limitations

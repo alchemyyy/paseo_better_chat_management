@@ -1,4 +1,4 @@
-import { attachmentsStore, layoutStore, type LayoutState, type OpenTabInput } from "./app-stores";
+import { attachmentsStore, layoutStore, type LayoutState, type OpenTabInput, type TabSnapshot } from "./app-stores";
 import { findAncestorProps, type StoreApi } from "./fiber";
 import { draftAttachmentScopeKey, readForkSource } from "./fork-attachment";
 import { installTabMenuSplits } from "./tab-menu";
@@ -77,6 +77,11 @@ export interface Controller {
   openTarget(serverId: string, workspaceId: string, target: TabTarget, options?: { pin?: boolean }): boolean;
   /** The next agent created from this draft is a fork of `parentAgentId` */
   expectFork(draftId: string, parentAgentId: string): void;
+  /**
+   * The chats `serverId`'s sidebar lists under a workspace other than their own, by workspace
+   * id. Paseo closes a tab whose chat belongs elsewhere; these keep their tabs there.
+   */
+  setMovedChats(serverId: string, chatsByWorkspace: ReadonlyMap<string, ReadonlySet<string>>): void;
 }
 
 // These keys and marks keep the plugin's former id ("better-chat-display"): changing them would
@@ -113,6 +118,8 @@ interface SharedBox {
   retainCount: number;
   listeners: Set<() => void>;
   recorders: Map<string, HostBinding>;
+  /** serverId -> workspace id -> chats listed there though they belong to another workspace */
+  movedChats: Map<string, ReadonlyMap<string, ReadonlySet<string>>>;
 }
 
 function splitWorkspaceKey(workspaceKey: string): { serverId: string; workspaceId: string } | null {
@@ -208,6 +215,7 @@ function createEngine(box: SharedBox): Engine {
   let restoreConvert: (() => void) | null = null;
   let restoreOpenTab: (() => void) | null = null;
   let restoreReplaceTab: (() => void) | null = null;
+  let restoreReconcile: (() => void) | null = null;
   /** Each chat list and the agent whose row it marks current, re-applied when React re-renders */
   let currentByList = new Map<DomElement, string | null>();
   const remarkCurrentChats = () => {
@@ -324,6 +332,30 @@ function createEngine(box: SharedBox): Engine {
     );
   };
 
+  /**
+   * Paseo closes agent tabs whose chat belongs to another workspace when it reconciles a
+   * workspace's tabs. A chat the sidebar lists under this workspace counts as its own here, so
+   * opening it there keeps its tab.
+   */
+  const interceptReconcile = (store: StoreApi<LayoutState>) => {
+    restoreReconcile = wrapStoreAction<LayoutState["reconcileTabs"]>(
+      store,
+      "reconcileTabs",
+      WRAP_OWNER,
+      (next) => (workspaceKey: string, tabSnapshot: TabSnapshot) => {
+        const ids = splitWorkspaceKey(workspaceKey);
+        const moved = ids ? box.movedChats.get(ids.serverId)?.get(ids.workspaceId) : undefined;
+        if (!moved || moved.size === 0) return next(workspaceKey, tabSnapshot);
+        return next(workspaceKey, {
+          ...tabSnapshot,
+          activeAgentIds: new Set([...tabSnapshot.activeAgentIds, ...moved]),
+          foreignAgentIds: [...(tabSnapshot.foreignAgentIds ?? [])].filter((agentId) => !moved.has(agentId)),
+        });
+      },
+      WRAP_OPTIONS,
+    );
+  };
+
   const attachStore = (): StoreApi<LayoutState> | null => {
     const store = layoutStore();
     if (store && store !== subscribedStore) {
@@ -331,11 +363,13 @@ function createEngine(box: SharedBox): Engine {
       restoreConvert?.();
       restoreOpenTab?.();
       restoreReplaceTab?.();
+      restoreReconcile?.();
       subscribedStore = store;
       releaseStore = store.subscribe(schedule);
       interceptConvert(store);
       interceptOpenTab(store);
       interceptReplaceTab(store);
+      interceptReconcile(store);
     }
     return subscribedStore;
   };
@@ -486,6 +520,9 @@ function createEngine(box: SharedBox): Engine {
     expectFork(draftId, parentAgentId) {
       expectedForks.set(draftId, parentAgentId);
     },
+    setMovedChats(serverId, chatsByWorkspace) {
+      box.movedChats.set(serverId, chatsByWorkspace);
+    },
   };
 
   const releaseStyle = installStyle();
@@ -523,6 +560,7 @@ function createEngine(box: SharedBox): Engine {
       restoreConvert?.();
       restoreOpenTab?.();
       restoreReplaceTab?.();
+      restoreReconcile?.();
       releaseStyle();
       releaseHover();
       releaseDrag();
@@ -546,7 +584,10 @@ export function retainController(): { controller: Controller; release(): void } 
     retainCount: 0,
     listeners: new Set(),
     recorders: new Map(),
+    movedChats: new Map(),
   };
+  // A box made by a build from before moved chats lacks the map
+  box.movedChats ??= new Map();
   holder[GLOBAL_KEY] = box;
   // An app session that ran the first builds still has that controller syncing the same DOM
   const legacy = (globalThis as unknown as Record<string, { stop?: () => void } | undefined>)[LEGACY_GLOBAL_KEY];
@@ -572,6 +613,7 @@ export function retainController(): { controller: Controller; release(): void } 
     bindHost: (serverId, binding) => engine().bindHost(serverId, binding),
     openTarget: (serverId, workspaceId, target, options) => engine().openTarget(serverId, workspaceId, target, options),
     expectFork: (draftId, parentAgentId) => engine().expectFork(draftId, parentAgentId),
+    setMovedChats: (serverId, chatsByWorkspace) => engine().setMovedChats(serverId, chatsByWorkspace),
   };
   let released = false;
   return {
