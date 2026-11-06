@@ -182,6 +182,8 @@ const DRAG_GESTURE_ATTRIBUTE = "data-better-chat-workspace-drag";
 /**
  * Marks a project's block (header plus workspace list). Paseo pads an expanded block 12px below
  * (sidebar-workspace-list.tsx projectBlockExpanded); the plugin closes that to PROJECT_GAP_PX.
+ * A project's lone workspace under the manual sort makes the block its own list (workspaceRowItem),
+ * so the rules below also match an element that is both.
  */
 const PROJECT_BLOCK_ATTRIBUTE = "data-better-chat-project-block";
 const PROJECT_GAP_PX = 6;
@@ -264,10 +266,10 @@ const STYLE_TEXT = [
   // around each workspace's status dot and turning at the last row: one SVG path, so every part
   // shares the stroke, antialiasing, and joins
   `[${RAIL_ATTRIBUTE}]{position:relative}`,
-  `[${PROJECT_BLOCK_ATTRIBUTE}]:has([${WORKSPACE_LIST_ATTRIBUTE}]){padding-bottom:${PROJECT_GAP_PX}px !important}`,
+  `[${PROJECT_BLOCK_ATTRIBUTE}]:has([${WORKSPACE_LIST_ATTRIBUTE}]),[${PROJECT_BLOCK_ATTRIBUTE}][${WORKSPACE_LIST_ATTRIBUTE}]{padding-bottom:${PROJECT_GAP_PX}px !important}`,
   // Above the rows, so a selected workspace's solid backdrop cannot cover the ring arcs reaching into it
   `[${RAIL_ATTRIBUTE}]::before{content:"";position:absolute;z-index:1;pointer-events:none;left:0;top:var(${RAIL_BOX_TOP_VARIABLE});width:var(${RAIL_BOX_WIDTH_VARIABLE});height:var(${RAIL_BOX_HEIGHT_VARIABLE});background-color:var(${RAIL_COLOR_VARIABLE});-webkit-mask:var(${RAIL_IMAGE_VARIABLE}) no-repeat 0 0 / 100% 100%;mask:var(${RAIL_IMAGE_VARIABLE}) no-repeat 0 0 / 100% 100%}`,
-  `[${PROJECT_BLOCK_ATTRIBUTE}]:has(${PROJECT_ROW_SELECTOR}:hover) [${RAIL_ATTRIBUTE}]::before{background-color:var(${RAIL_HOVER_COLOR_VARIABLE})}`,
+  `[${PROJECT_BLOCK_ATTRIBUTE}]:has(${PROJECT_ROW_SELECTOR}:hover) [${RAIL_ATTRIBUTE}]::before,[${PROJECT_BLOCK_ATTRIBUTE}][${RAIL_ATTRIBUTE}]:has(${PROJECT_ROW_SELECTOR}:hover)::before{background-color:var(${RAIL_HOVER_COLOR_VARIABLE})}`,
   // The rail's rings sit on resting rows, so it steps aside while the rows move
   `[${RAIL_ATTRIBUTE}][${LIST_DRAGGING_ATTRIBUTE}]::before{visibility:hidden}`,
   `[${DRAG_GESTURE_ATTRIBUTE}],[${DRAG_GESTURE_ATTRIBUTE}] *{user-select:none !important;-webkit-user-select:none !important}`,
@@ -561,7 +563,7 @@ export interface ProjectList {
 /**
  * Each expanded project's workspace list with its project row, under either sort: the list is
  * the parent of the project's row items, and its project the one project row in the nearest
- * ancestor that holds any. Marks each list for the block spacing rule.
+ * ancestor that holds any. Marks each list for the block spacing rule and unmarks the rest.
  */
 export function findProjectLists(): ProjectList[] {
   const found: ProjectList[] = [];
@@ -584,29 +586,48 @@ export function findProjectLists(): ProjectList[] {
     const viewKey = (projectRow.getAttribute("data-testid") ?? "").slice(PROJECT_ROW_PREFIX.length);
     found.push({ viewKey, list, projectRow });
   }
+  unmarkOthers(WORKSPACE_LIST_ATTRIBUTE, new Set(found.map(({ list }) => list)));
   return found;
+}
+
+/**
+ * Removes `attribute` from every element carrying it except `keep`. A list can outlive its rows:
+ * a project's lone workspace makes the project's own block its list under the manual sort
+ * (workspaceRowItem), and that block stays when the project collapses, so a mark left on it
+ * would keep drawing the old rail and spacing.
+ */
+function unmarkOthers(attribute: string, keep: ReadonlySet<DomElement>): void {
+  const marked = document.querySelectorAll(`[${attribute}]`);
+  for (let index = 0; index < marked.length; index++) {
+    if (!keep.has(marked[index])) marked[index].removeAttribute(attribute);
+  }
 }
 
 /**
  * Joins each expanded project's workspace list to its project icon with a rail: the list's
  * ::before, placed by variables measured here from the icon's slot (project-leading-visual.tsx)
- * and colored from the project title. Lists without a matching project row lose the rail.
+ * and colored from the project title. Lists without a matching project row lose the rail, as
+ * does every element that is no longer a list.
  */
 export function syncProjectRails(): void {
+  const blocks = new Set<DomElement>();
+  const railed = new Set<DomElement>();
   for (const { list, projectRow } of findProjectLists()) {
-    // The block is the nearest ancestor holding both the project's header and its list
-    let block = list.parentElement;
+    // The block is the nearest element holding both the project's header and its list: the list
+    // itself when it holds the header
+    let block: DomElement | null = list;
     while (block && !block.contains(projectRow)) block = block.parentElement;
-    if (block && block.getAttribute(PROJECT_BLOCK_ATTRIBUTE) === null) block.setAttribute(PROJECT_BLOCK_ATTRIBUTE, "true");
+    if (block) {
+      blocks.add(block);
+      if (block.getAttribute(PROJECT_BLOCK_ATTRIBUTE) === null) block.setAttribute(PROJECT_BLOCK_ATTRIBUTE, "true");
+    }
     // The row's first child is its left group, whose first child is the icon slot
     const slot = projectRow.firstElementChild?.firstElementChild;
     // The title, after the icon slot: the icon's own letter is text too, and hover swaps it for a chevron
     const title = projectRow.firstElementChild?.lastElementChild?.querySelector('[dir="auto"]');
     const slotRect = slot?.getBoundingClientRect();
-    if (!slotRect || slotRect.width === 0 || !title) {
-      if (list.getAttribute(RAIL_ATTRIBUTE) !== null) list.removeAttribute(RAIL_ATTRIBUTE);
-      continue;
-    }
+    if (!slotRect || slotRect.width === 0 || !title) continue;
+    railed.add(list);
     const listRect = list.getBoundingClientRect();
     // Quarter-pixel steps keep the key stable against sub-pixel layout jitter
     const quarter = (value: number) => Math.round(value * 4) / 4;
@@ -641,6 +662,8 @@ export function syncProjectRails(): void {
     list.style.setProperty(STATUS_SHIFT_VARIABLE, `${shift}px`);
     list.setAttribute(RAIL_ATTRIBUTE, key);
   }
+  unmarkOthers(PROJECT_BLOCK_ATTRIBUTE, blocks);
+  unmarkOthers(RAIL_ATTRIBUTE, railed);
 }
 
 /**
