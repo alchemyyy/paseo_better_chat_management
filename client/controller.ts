@@ -104,6 +104,28 @@ const WRAP_OPTIONS = {
 
 type ControllerMethods = Omit<Controller, "subscribe">;
 
+const EMPTY_SNAPSHOT: ControllerSnapshot = {
+  slots: [],
+  currentChatAgentIdByWorkspace: {},
+  selectedBackdrop: null,
+  workspaceGlyphCenter: null,
+  selectedWorkspaceKeys: [],
+  localForkParents: {},
+};
+
+/**
+ * Serves a controller whose engine is gone. Paseo runs a plugin's cleanup before React unmounts
+ * the components it contributed, so their effect cleanups, and any render in between, still call
+ * a released controller: it shows nothing and changes nothing.
+ */
+const STOPPED_METHODS: ControllerMethods = {
+  getSnapshot: () => EMPTY_SNAPSHOT,
+  bindHost: () => () => {},
+  openTarget: () => false,
+  expectFork: () => {},
+  setMovedChats: () => {},
+};
+
 interface Engine {
   methods: ControllerMethods;
   stop(): void;
@@ -199,14 +221,7 @@ function createEngine(box: SharedBox): Engine {
   const seenWorkspaces = new Set<string>();
   const memory = loadMemory();
   let savedMemory = JSON.stringify(memory);
-  let snapshot: ControllerSnapshot = {
-    slots: [],
-    currentChatAgentIdByWorkspace: {},
-    selectedBackdrop: null,
-    workspaceGlyphCenter: null,
-    selectedWorkspaceKeys: [],
-    localForkParents: {},
-  };
+  let snapshot: ControllerSnapshot = EMPTY_SNAPSHOT;
   let lastSelected: readonly string[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
@@ -574,8 +589,8 @@ function createEngine(box: SharedBox): Engine {
 /**
  * One engine serves every installation of this plugin (one per connected host), since the
  * sidebar and tab strip are shared app UI. Each retain starts a fresh engine from the newest
- * bundle: a reload evaluates the new bundle before the old one releases, and keeping the old
- * engine would run stale code. The last release stops it.
+ * bundle: other hosts' installations still hold the old one through a reload, and keeping it
+ * would run stale code. The last release stops it.
  */
 export function retainController(): { controller: Controller; release(): void } {
   const holder = globalThis as unknown as Record<string, SharedBox | undefined>;
@@ -600,10 +615,7 @@ export function retainController(): { controller: Controller; release(): void } 
   box.retainCount += 1;
   for (const listener of box.listeners) listener();
 
-  const engine = (): ControllerMethods => {
-    if (!box.engine) throw new Error("better-chat-management stopped");
-    return box.engine.methods;
-  };
+  const engine = (): ControllerMethods => box.engine?.methods ?? STOPPED_METHODS;
   const controller: Controller = {
     subscribe(listener) {
       box.listeners.add(listener);
